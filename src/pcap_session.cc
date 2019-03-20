@@ -72,17 +72,21 @@ void PcapSession::PacketReady(u_char *s, const struct pcap_pkthdr* pkthdr, const
     if (copy_len > session->buffer_length) {
         copy_len = session->buffer_length;
     }
-    memcpy(session->buffer_data, packet, copy_len);
+    Local<Object> my_packet_header = Nan::NewBuffer(16).ToLocalChecked();
+    char* my_packet_header_data = (char*) node::Buffer::Data(my_packet_header);
+    // copy header data to fixed offsets in just created buffer for result
+    memcpy(my_packet_header_data, &(pkthdr->ts.tv_sec), 4);
+    memcpy(my_packet_header_data + 4, &(pkthdr->ts.tv_usec), 4);
+    memcpy(my_packet_header_data + 8, &(pkthdr->caplen), 4);
+    memcpy(my_packet_header_data + 12, &(pkthdr->len), 4);
 
-    // copy header data to fixed offsets in second buffer from user
-    memcpy(session->header_data, &(pkthdr->ts.tv_sec), 4);
-    memcpy(session->header_data + 4, &(pkthdr->ts.tv_usec), 4);
-    memcpy(session->header_data + 8, &(pkthdr->caplen), 4);
-    memcpy(session->header_data + 12, &(pkthdr->len), 4);
+    Nan::MaybeLocal<Object> my_packet = Nan::CopyBuffer((char*) packet, pkthdr->caplen);
 
     Nan::TryCatch try_catch;
 
-    Nan::MakeCallback(Nan::GetCurrentContext()->Global(), Nan::New(session->packet_ready_cb), 0, NULL);
+    const unsigned argc = 2;
+    v8::Local<v8::Value> argv[argc] = { my_packet_header, my_packet.ToLocalChecked() };
+    Nan::MakeCallback(Nan::GetCurrentContext()->Global(), Nan::New(session->packet_ready_cb), argc, argv);
 
     if (try_catch.HasCaught())  {
         Nan::FatalException(try_catch);
@@ -93,28 +97,7 @@ void PcapSession::Dispatch(const Nan::FunctionCallbackInfo<Value>& info)
 {
     Nan::HandleScope scope;
 
-    if (info.Length() != 2) {
-        Nan::ThrowTypeError("Dispatch takes exactly two arguments");
-        return;
-    }
-
-    if (!node::Buffer::HasInstance(info[0])) {
-        Nan::ThrowTypeError("First argument must be a buffer");
-        return;
-    }
-
-    if (!node::Buffer::HasInstance(info[1])) {
-        Nan::ThrowTypeError("Second argument must be a buffer");
-        return;
-    }
-
     PcapSession* session = Nan::ObjectWrap::Unwrap<PcapSession>(info.This());
-
-    Local<Object> buffer_obj = info[0]->ToObject();
-    session->buffer_data = node::Buffer::Data(buffer_obj);
-    session->buffer_length = node::Buffer::Length(buffer_obj);
-    Local<Object> header_obj = info[1]->ToObject();
-    session->header_data = node::Buffer::Data(header_obj);
 
     int packet_count;
     do {
